@@ -8,7 +8,7 @@
 
 Kito Harness 是 `deepseek-ai/deepseek-harness` 的 KT fork。生产代码事实源是 `kt-aihub/deepseek-harness` 的 `main`；上游使用 `deepseek-ai/deepseek-harness` 的 `master` 和 `dsh-v*` tag。
 
-Kito Harness 的发布版本和上游分开编号。所有 `package.json` 保持已合并的上游发行版的 dsh 版本，`kt/kito-harness/version.json` 保存安装包、应用和更新源携带的 Kito Harness 发布版本。fork 发版时不运行 `pnpm release:dsh`，也不推送 `dsh-v*` tag。
+Kito Harness 的发布版本和上游完全解耦（参见 `ADR 0005` 与 [ADR 0006](adr/0006-kito-versioning-governance-and-core-observability.zh.md)）。所有 `package.json` 保持已合并的上游发行版的 dsh 版本，`kt/kito-harness/version.json` 保存安装包、应用和更新源携带的 Kito Harness 独立产品版本（从 `1.0.0-rc.1` 起沿 `1.x` 递增，不再复用上游 `0.2.x` 号段）。打包运行期会在「关于」弹窗、崩溃报告与 Sentry 标签中附带底层 `dsh` 内核版本以便排障。fork 发版时不运行 `pnpm release:dsh`，也不推送 `dsh-v*` tag。
 
 当前分发方式：
 

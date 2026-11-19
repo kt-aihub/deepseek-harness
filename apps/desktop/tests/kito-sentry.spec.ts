@@ -65,11 +65,20 @@ describe('Kito desktop error collection', () => {
     expect(sentry.flush).toHaveBeenCalledOnce()
   })
 
-  it('labels a packaged build separately from local development', async () => {
+  it('labels a packaged build separately from local development and tags the bundled dsh core version', async () => {
     process.env.DSH_SENTRY_DSN = 'https://public@sentry.ktyun.cc/1'
     const collector = await load()
-    expect(collector.initKitoSentry({ packaged: true, release: '0.2.1-rc.2' })).toBe(true)
-    expect(sentry.init.mock.calls[0]?.[0]).toMatchObject({ environment: 'packaged' })
+    expect(collector.initKitoSentry({ packaged: true, release: '1.0.0-rc.1', coreVersion: '0.2.2-rc.5' })).toBe(true)
+    expect(sentry.init.mock.calls[0]?.[0]).toMatchObject({
+      environment: 'packaged',
+      release: '1.0.0-rc.1',
+      initialScope: { tags: { 'dsh.core_version': '0.2.2-rc.5' } },
+    })
+    const failure = new Error('boom')
+    await collector.captureKitoFailure(failure, { source: 'host', phase: 'running' })
+    expect(sentry.captureException).toHaveBeenCalledWith(failure, {
+      tags: { 'kito.source': 'host', 'kito.phase': 'running', surface: 'desktop', 'dsh.core_version': '0.2.2-rc.5' },
+    })
   })
 
   it('keeps a rejected DSN from stopping startup', async () => {

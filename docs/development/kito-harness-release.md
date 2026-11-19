@@ -8,7 +8,7 @@ This is the operational source of truth for Kito Harness: upstream synchronizati
 
 Kito Harness is the KT fork of `deepseek-ai/deepseek-harness`. The production source of truth is `main` in `kt-aihub/deepseek-harness`; upstream follows `master` and `dsh-v*` tags in `deepseek-ai/deepseek-harness`.
 
-Kito Harness numbers its releases apart from upstream. Every `package.json` keeps the dsh version of the merged upstream release, and `kt/kito-harness/version.json` holds the Kito Harness release version that installers, the application, and the update feed carry. The fork does not run `pnpm release:dsh` for a release and does not push `dsh-v*` tags.
+Kito Harness decouples its product version line from upstream (see `ADR 0005` and [ADR 0006](adr/0006-kito-versioning-governance-and-core-observability.md)). Every `package.json` keeps the dsh version of the merged upstream release, and `kt/kito-harness/version.json` holds the independent Kito Harness product version carried by installers, the application, and the update feed (`1.x`, starting at `1.0.0-rc.1`, without reusing upstream `0.2.x`). Packaged builds also surface the bundled upstream `dsh` core version in About, crash reports, and Sentry tags for diagnostics. The fork does not run `pnpm release:dsh` for a release and does not push `dsh-v*` tags.
 
 Current distribution:
 

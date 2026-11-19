@@ -181,7 +181,7 @@ const harness = await vi.hoisted(async () => {
     whenReady: () => Promise.resolve(),
     getLocale: (): string => 'en-US',
     getPreferredSystemLanguages: () => ['en-US'],
-    getVersion: () => '1.0.0',
+    getVersion: (): string => '1.0.0',
     getAppPath: (): string => 'desktop-test-app',
     setAppLogsPath: vi.fn(),
     setPath: vi.fn<(name: string, path: string) => void>(),
@@ -894,6 +894,28 @@ describe('desktop main startup', () => {
     ;(about!.click as () => void)()
     await vi.advanceTimersByTimeAsync(0)
     expect(console.error).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'overlay unavailable' }))
+  })
+
+  it.each(['darwin', 'win32'] as const)('surfaces the bundled dsh core version in About on %s when Kito version diverges', async (platform) => {
+    vi.stubGlobal('process', { ...process, platform })
+    harness.app.isPackaged = true
+    vi.spyOn(harness.app, 'getVersion').mockReturnValue('1.0.0-rc.1')
+    vi.spyOn(harness.app, 'getLocale').mockReturnValue('zh-CN')
+    vi.spyOn(harness.app, 'getPreferredSystemLanguages').mockReturnValue(['zh-CN'])
+    await readyForUpdate()
+    expect(harness.app.setAboutPanelOptions).toHaveBeenCalledWith(expect.objectContaining({
+      applicationName: 'Kito Harness',
+      applicationVersion: '1.0.0-rc.1',
+      version: 'dsh 1.0.0',
+    }))
+    if (platform !== 'win32') return
+    const [about] = applicationMenuItems()
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 })
+    ;(about!.click as () => void)()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(harness.dialog.showMessageBox).toHaveBeenLastCalledWith(expect.objectContaining({
+      detail: '版本 V1.0.0-rc.1\nCore: dsh 1.0.0',
+    }))
   })
 
   it.each(['missing-file', 'missing-field', 'disabled'] as const)('suppresses every test auth dialog for %s while continuing update checks', async (configuration) => {

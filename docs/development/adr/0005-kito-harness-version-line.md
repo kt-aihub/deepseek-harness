@@ -58,5 +58,5 @@ ADR 0004 把它列为待定问题。
 
 ## 非目标
 
-- “关于”窗口不显示上游基线版本。基线版本是发布 tag 处根 `package.json` 的 `version`，写进 Release 说明。
+- “关于”窗口显示上游基线版本及诊断字段的可观测性规范后续由 [ADR 0006](0006-kito-versioning-governance-and-core-observability.zh.md) 修订并落地；基线版本同时继续写进 Release 说明。
 - 不移动 `packages/llm/llm-ktapi` 和 `packages/client/ui-brand-kito`。它们的包名由 ADR 0004 决定。

@@ -21,7 +21,7 @@ export interface KitoRouteOptions {
   /** Revoke the ktapi.cc console session kept for the recharge window. */
   readonly signOutConsole?: () => Promise<void>
   /** Read the spendable USD balance through the Identity login. */
-  readonly readBalance?: (identityToken: string) => Promise<number | undefined>
+  readonly readBalance?: (identityToken: string, accountNo?: string) => Promise<number | undefined>
   /** Renew and store the Identity token from the saved refresh token; undefined when none can be issued. */
   readonly refreshIdentity?: () => Promise<string | undefined>
   /** Remove the stored Identity token and refresh token after sign-out. */
@@ -75,19 +75,37 @@ async function openConsolePage(options: KitoRouteOptions, page: KitoConsolePage)
     options.showWelcome()
     return Response.json({ ok: false }, { status: 401 })
   }
-  try {
-    if (options.openConsole !== undefined) await options.openConsole(token, page)
-    else if (page === 'wallet') await options.openWallet(token)
+  const openWith = async (identityToken: string): Promise<Response> => {
+    if (options.openConsole !== undefined) await options.openConsole(identityToken, page)
+    else if (page === 'wallet') await options.openWallet(identityToken)
     else return Response.json({ ok: false }, { status: 501 })
     return Response.json({ ok: true })
-  } catch (error) {
-    options.onConsoleError?.(error)
-    const status = error !== null && typeof error === 'object' && 'status' in error
-      && typeof error.status === 'number' && error.status >= 400 && error.status <= 599
-      ? error.status
-      : 503
-    return Response.json({ ok: false }, { status })
   }
+  try {
+    return await openWith(token)
+  } catch (error) {
+    if (consoleErrorStatus(error) === 401 && options.refreshIdentity !== undefined) {
+      try {
+        const renewed = await options.refreshIdentity()
+        if (renewed !== undefined) return await openWith(renewed)
+      } catch (retryError) {
+        return failConsoleOpen(options, retryError)
+      }
+    }
+    return failConsoleOpen(options, error)
+  }
+}
+
+function consoleErrorStatus(error: unknown): number {
+  return error !== null && typeof error === 'object' && 'status' in error
+    && typeof error.status === 'number' && error.status >= 400 && error.status <= 599
+    ? error.status
+    : 503
+}
+
+function failConsoleOpen(options: KitoRouteOptions, error: unknown): Response {
+  options.onConsoleError?.(error)
+  return Response.json({ ok: false }, { status: consoleErrorStatus(error) })
 }
 
 /**
@@ -111,7 +129,7 @@ async function readAccountResponse(options: KitoRouteOptions): Promise<Response>
       return Response.json({ signedIn: false })
     }
     if (options.loadAccount !== undefined || options.readBalance === undefined) return Response.json(profile)
-    const balance = await options.readBalance(activeToken ?? '').catch(() => undefined)
+    const balance = await options.readBalance(activeToken ?? '', profile.accountNo).catch(() => undefined)
     return Response.json(balance === undefined ? profile : { ...profile, balance })
   } catch (error) {
     console.error('kito account read failed', failureDetail(error))

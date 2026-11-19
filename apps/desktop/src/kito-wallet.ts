@@ -1,7 +1,7 @@
 /** Turn the stored KT Identity login into a ktapi.cc console session for the wallet page. */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveKitoHarnessHome } from './kito-home.ts'
 import { failureDetail, jsonHeaders, kitoFetch, readJson, withTimeout } from './kito-http.ts'
@@ -10,6 +10,8 @@ import { identityBaseUrl, kitoAccountView, KITO_WALLET_URL, spendableFromEnsure,
 /** Cookie the NewAPI console uses to recognize a login. The value never leaves this process. */
 export const KITO_CONSOLE_REFRESH_COOKIE = 'new_api_refresh'
 const CONSOLE_DEVICE_FILE = '.console-device-id'
+const CONSOLE_ACCOUNT_FILE = '.console-account-no'
+const ACCOUNT_NO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/u
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 
 export interface ConsoleCookie {
@@ -97,6 +99,43 @@ export async function resolveKitoConsoleDeviceId(home: string = resolveKitoHarne
 }
 
 /**
+ * Read the KT account number that owns the stored console cookie.
+ * @param home - Kito Harness data directory; defaults to {@link resolveKitoHarnessHome}.
+ * @returns the account number, or undefined when none has been recorded.
+ */
+export async function readKitoConsoleAccountNo(home: string = resolveKitoHarnessHome()): Promise<string | undefined> {
+  try {
+    const existing = (await readFile(join(home, CONSOLE_ACCOUNT_FILE), 'utf8')).trim()
+    return ACCOUNT_NO_RE.test(existing) ? existing : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Remember which KT account owns the console cookie in this home.
+ * @param accountNo - KT account number from Identity.
+ * @param home - Kito Harness data directory; defaults to {@link resolveKitoHarnessHome}.
+ */
+export async function writeKitoConsoleAccountNo(accountNo: string, home: string = resolveKitoHarnessHome()): Promise<void> {
+  if (!ACCOUNT_NO_RE.test(accountNo)) return
+  try {
+    await mkdir(home, { recursive: true })
+    await writeFile(join(home, CONSOLE_ACCOUNT_FILE), `${accountNo}\n`, { mode: 0o600 })
+  } catch {
+    // A read-only home still keeps the owner in the process that just signed in.
+  }
+}
+
+/**
+ * Forget the recorded console account so the next open cannot reuse another person's cookie.
+ * @param home - Kito Harness data directory; defaults to {@link resolveKitoHarnessHome}.
+ */
+export async function clearKitoConsoleAccountNo(home: string = resolveKitoHarnessHome()): Promise<void> {
+  await rm(join(home, CONSOLE_ACCOUNT_FILE), { force: true })
+}
+
+/**
  * Ask ktapi.cc to accept the Identity login and return the console session cookies.
  * The token is not placed in the page URL.
  * @param identityToken - KT Identity access token.
@@ -149,12 +188,6 @@ export async function establishKitoConsoleSession(
 }
 
 /**
- * Build the existing console logout call. The refresh cookie is the session; the Identity token is not sent.
- * @param pageUrl - wallet page whose origin owns the cookie.
- * @param refreshValue - `new_api_refresh` value already stored for that origin.
- * @returns the request that revokes this one website login.
- */
-/**
  * Build the existing console refresh call. The response rotates the refresh cookie and includes the spendable quota.
  * @param pageUrl - wallet page whose origin owns the cookie.
  * @param refreshValue - `new_api_refresh` value already stored for that origin.
@@ -173,10 +206,17 @@ export function consoleRefreshRequest(pageUrl: string, refreshValue: string): { 
         referer: pageUrl,
       },
       body: '{}',
+      signal: withTimeout(undefined),
     },
   }
 }
 
+/**
+ * Build the existing console logout call. The refresh cookie is the session; the Identity token is not sent.
+ * @param pageUrl - wallet page whose origin owns the cookie.
+ * @param refreshValue - `new_api_refresh` value already stored for that origin.
+ * @returns the request that revokes this one website login.
+ */
 export function consoleLogoutRequest(pageUrl: string, refreshValue: string): { readonly url: string; readonly init: RequestInit } {
   const origin = new URL(pageUrl).origin
   return {
@@ -190,6 +230,7 @@ export function consoleLogoutRequest(pageUrl: string, refreshValue: string): { r
         referer: pageUrl,
       },
       body: '{}',
+      signal: withTimeout(undefined, 5_000),
     },
   }
 }
@@ -217,6 +258,7 @@ export class ConsoleLoginError extends Error {
 
 interface DesktopSession {
   readonly at: number
+  readonly identityToken: string
   readonly pageUrl: string
   readonly account: KitoAccountView
   readonly cookies: readonly ConsoleCookie[]
@@ -224,6 +266,7 @@ interface DesktopSession {
 
 let cachedSession: DesktopSession | undefined
 let sessionInflight: Promise<DesktopSession> | undefined
+let sessionInflightToken = ''
 let consoleRetryAt = 0
 
 /**
@@ -234,7 +277,11 @@ let consoleRetryAt = 0
  * @returns the signed-in name, without a balance until a console session exists.
  */
 export async function loadKitoProfile(identityToken: string): Promise<KitoAccountView> {
-  if (cachedSession !== undefined && Date.now() - cachedSession.at < CONSOLE_SESSION_TTL_MS) return cachedSession.account
+  if (cachedSession !== undefined
+    && cachedSession.identityToken === identityToken
+    && Date.now() - cachedSession.at < CONSOLE_SESSION_TTL_MS) {
+    return cachedSession.account
+  }
   const response = await kitoFetch(`${identityBaseUrl()}/identity/v1/account/me`, {
     method: 'GET',
     headers: jsonHeaders({ authorization: `Bearer ${identityToken}` }),
@@ -253,15 +300,26 @@ export async function loadKitoProfile(identityToken: string): Promise<KitoAccoun
  * @returns the account summary and the cookies that open the wallet signed in.
  */
 export async function loadKitoDesktopSession(identityToken: string): Promise<DesktopSession> {
-  if (cachedSession !== undefined && cachedSession.cookies.length > 0 && Date.now() - cachedSession.at < CONSOLE_SESSION_TTL_MS) {
-    return cachedSession
+  const sameCached = cachedSession !== undefined && cachedSession.identityToken === identityToken
+    ? cachedSession
+    : undefined
+  if (sameCached !== undefined && sameCached.cookies.length > 0 && Date.now() - sameCached.at < CONSOLE_SESSION_TTL_MS) {
+    return sameCached
   }
   if (Date.now() < consoleRetryAt) {
-    if (cachedSession !== undefined) return cachedSession
+    if (sameCached !== undefined) return sameCached
     throw new Error('KTAPI console login is cooling down')
   }
-  sessionInflight ??= readDesktopSession(identityToken).finally(() => { sessionInflight = undefined })
-  return sessionInflight
+  if (sessionInflight !== undefined && sessionInflightToken === identityToken) return sessionInflight
+  const request = readDesktopSession(identityToken).finally(() => {
+    if (sessionInflight === request) {
+      sessionInflight = undefined
+      sessionInflightToken = ''
+    }
+  })
+  sessionInflight = request
+  sessionInflightToken = identityToken
+  return request
 }
 
 async function readDesktopSession(identityToken: string): Promise<DesktopSession> {
@@ -280,9 +338,12 @@ async function readDesktopSession(identityToken: string): Promise<DesktopSession
   } catch (error) {
     console.error('kito wallet login failed', failureDetail(error))
     consoleRetryAt = Date.now() + (error instanceof ConsoleLoginError ? error.retryMs : 60_000)
-    if (cachedSession !== undefined && cachedSession.cookies.length > 0) return cachedSession
+    if (cachedSession !== undefined && cachedSession.identityToken === identityToken && cachedSession.cookies.length > 0) {
+      return cachedSession
+    }
     const session: DesktopSession = {
       at: Date.now(),
+      identityToken,
       pageUrl: KITO_WALLET_URL,
       cookies: [],
       account: kitoAccountView(profilePayload, undefined),
@@ -292,6 +353,7 @@ async function readDesktopSession(identityToken: string): Promise<DesktopSession
   }
   const session: DesktopSession = {
     at: Date.now(),
+    identityToken,
     pageUrl: established.pageUrl,
     cookies: established.cookies,
     account: kitoAccountView(profilePayload, spendableFromEnsure(established.payload)),

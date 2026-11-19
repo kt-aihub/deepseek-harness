@@ -284,16 +284,54 @@ describe('Kito account summary', () => {
     expect(refreshes).toBe(1)
 
     let seenBalanceToken = ''
+    let seenAccountNo: string | undefined
     const withBalance = await handleKitoAppRoute(new Request('dsh-app://app/kito/account'), {
       showWelcome: () => undefined,
       openWallet: async () => undefined,
       readToken: async () => 'expired',
-      loadProfile: async token => token === 'renewed' ? { signedIn: true, displayName: 'Ada' } : { signedIn: false },
+      loadProfile: async token => token === 'renewed'
+        ? { signedIn: true, displayName: 'Ada', accountNo: 'KT-ADA' }
+        : { signedIn: false },
       refreshIdentity: async () => 'renewed',
-      readBalance: async (token) => { seenBalanceToken = token; return 454.7 },
+      readBalance: async (token, accountNo) => {
+        seenBalanceToken = token
+        seenAccountNo = accountNo
+        return 454.7
+      },
     })
-    await expect(withBalance?.json()).resolves.toEqual({ signedIn: true, displayName: 'Ada', balance: 454.7 })
+    await expect(withBalance?.json()).resolves.toEqual({ signedIn: true, displayName: 'Ada', accountNo: 'KT-ADA', balance: 454.7 })
     expect(seenBalanceToken).toBe('renewed')
+    expect(seenAccountNo).toBe('KT-ADA')
+  })
+
+  it('renews an expired Identity token once before failing a console open with 401', async () => {
+    const attempts: string[] = []
+    const errors: unknown[] = []
+    const response = await handleKitoAppRoute(new Request('dsh-app://app/kito/open?target=wallet', { method: 'POST' }), {
+      showWelcome: () => undefined,
+      openWallet: async () => undefined,
+      openConsole: async (token) => {
+        attempts.push(token)
+        if (token === 'expired') throw Object.assign(new Error('rejected'), { status: 401 })
+      },
+      refreshIdentity: async () => 'renewed',
+      onConsoleError: error => errors.push(error),
+      readToken: async () => 'expired',
+    })
+    expect(response?.status).toBe(200)
+    expect(attempts).toEqual(['expired', 'renewed'])
+    expect(errors).toHaveLength(0)
+
+    const failed = await handleKitoAppRoute(new Request('dsh-app://app/kito/open?target=wallet', { method: 'POST' }), {
+      showWelcome: () => undefined,
+      openWallet: async () => undefined,
+      openConsole: async () => { throw Object.assign(new Error('rejected'), { status: 401 }) },
+      refreshIdentity: async () => undefined,
+      onConsoleError: error => errors.push(error),
+      readToken: async () => 'expired',
+    })
+    expect(failed?.status).toBe(401)
+    expect(errors).toHaveLength(1)
   })
 
   it('returns 503 on transient profile failure so the renderer retains cached name and balance', async () => {

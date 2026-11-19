@@ -50,6 +50,18 @@ it('renders the facts header, the inspected error with its properties and cause,
   expect(text.endsWith('\n')).toBe(true)
 })
 
+it('records the bundled upstream dsh core version when it differs from the product version', () => {
+  const diverged = renderCrashReport(input({
+    app: { ...input().app, version: '1.0.0-rc.1', coreVersion: '0.2.2-rc.5' },
+  }))
+  expect(diverged).toContain('app: Kito Harness 1.0.0-rc.1\ncore: dsh 0.2.2-rc.5\nplatform: win32 x64\n')
+
+  const matching = renderCrashReport(input({
+    app: { ...input().app, version: '0.2.2-rc.5', coreVersion: '0.2.2-rc.5' },
+  }))
+  expect(matching).not.toContain('core: dsh')
+})
+
 it('prints the Host diagnostic verbatim in its own section when the Host reported one', () => {
   const diagnostic = "Error: profile has no cordis.yml\n    at load (index.js:1:1) {\n  code: 'ENOENT'\n}"
   const text = renderCrashReport(input({ error: new Error('profile has no cordis.yml'), hostDiagnostic: diagnostic }))

@@ -20,6 +20,8 @@ export type CrashReportPhase = 'startup' | 'running'
 export interface CrashReportApp {
   readonly name: string
   readonly version: string
+  /** Bundled upstream dsh core version when it differs from the product version. */
+  readonly coreVersion?: string
   readonly platform: string
   readonly arch: string
   readonly electron: string
@@ -109,6 +111,9 @@ export function renderCrashReport(input: CrashReportInput): string {
     `source: ${input.source}`,
     `phase: ${input.phase}`,
     `app: ${input.app.name} ${input.app.version}`,
+    ...(input.app.coreVersion !== undefined && input.app.coreVersion !== '' && input.app.coreVersion !== input.app.version
+      ? [`core: dsh ${input.app.coreVersion}`]
+      : []),
     `platform: ${input.app.platform} ${input.app.arch}`,
     `electron: ${input.app.electron}`,
     `node: ${input.app.node}`,

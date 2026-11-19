@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for 0006-kito-versioning-governance-and-core-observability.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/development/adr/0006-kito-versioning-governance-and-core-observability.md
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability:
+  en: dff714ad3ee2bec4
+  zh: 3ecd17abda43bc8d
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/context:
+  en: c2fa92c2f8b0141a
+  zh: d2ad2c8574ea9ef0
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/decision:
+  en: db3a2ee6cf62561a
+  zh: 0563a45c64e87545
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/decision/1-decoupled-version-lines:
+  en: 6edd0bd577e3b958
+  zh: cd282dc33aefa4eb
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/decision/2-decouple-upstream-synchronization-from-product-releases:
+  en: c91d16763cb9b6d6
+  zh: 28f01f10c8417e6b
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/decision/3-dual-version-runtime-observability-amends-adr-0005-non-goals:
+  en: f30056285d72a394
+  zh: b0871afe2c450a9f
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/decision/4-strict-separation-of-release-and-preview-channels:
+  en: 888353f90aca7114
+  zh: 077c19113a2f03d6
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/rationale:
+  en: 32da4086dfb4745f
+  zh: e49b989c43211dcd
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/reapply-on-upstream-merges:
+  en: 5e1e1d89022e7296
+  zh: 623c00cc0f1f1a70
+/adr-0006-kito-harness-enterprise-versioning-governance-and-core-observability/consequences:
+  en: bb1cbb92dd11ad26
+  zh: 8255d118c3299463

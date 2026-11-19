@@ -76,6 +76,7 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
 import { handleKitoAppRoute } from './kito-account-route.ts'
+import { commitKitoIdentity } from './kito-account-switch.ts'
 import { KitoConsoleSessionError, openKitoConsole, readKitoAccountBalance, signOutKitoConsole } from './kito-wallet-window.ts'
 import { shouldDismissNewWelcome } from './kito-welcome-policy.ts'
 import { fetchKitoProfile, identityBaseUrl, KITO_CLAUDE_KEY_REF, KITO_IDENTITY_REFRESH_TOKEN_REF, KITO_IDENTITY_TOKEN_REF, KITO_NEWAPI_KEY_REF, refreshKitoIdentity } from './kito-identity.ts'
@@ -200,8 +201,18 @@ async function waitForOperationReports(): Promise<void> {
   } finally { clearTimeout(timer) }
 }
 
+function resolveBundledDshVersion(): string | undefined {
+  if (!app.isPackaged) return undefined
+  try {
+    return readDesktopRuntime(runtimeResources().dsh).release.version
+  } catch {
+    return undefined
+  }
+}
+
 function persistCrashReport(error: unknown, source: CrashReportSource): Promise<string | undefined> {
   const directory = app.getPath('logs')
+  const coreVersion = resolveBundledDshVersion()
   const report = writeCrashReport(directory, {
     operationHistoryPlanned: !shuttingDown && !operationReportsStopping,
     source,
@@ -210,7 +221,9 @@ function persistCrashReport(error: unknown, source: CrashReportSource): Promise<
     ...(error instanceof DesktopHostFatalError && error.diagnostic !== undefined ? { hostDiagnostic: error.diagnostic } : {}),
     rendererConsole: rendererConsole.snapshot(),
     app: {
-      name: app.name, version: app.getVersion(), platform: process.platform, arch: process.arch,
+      name: app.name, version: app.getVersion(),
+      ...(coreVersion === undefined ? {} : { coreVersion }),
+      platform: process.platform, arch: process.arch,
       electron: process.versions.electron, node: process.versions.node, locale: currentDesktopLocale().id,
     },
     time: new Date(),
@@ -522,8 +535,14 @@ async function main(): Promise<void> {
   // Copy comes from the same locale as the update prompts so the dialog
   // chrome and its content never mix languages.
   const showAbout = async (): Promise<void> => {
+    const appVersion = app.getVersion()
+    const coreVersion = resolveBundledDshVersion()
+    const versionLine = formatDesktopMessage(locale.messages.aboutVersion, { version: appVersion })
+    const detail = coreVersion !== undefined && coreVersion !== appVersion
+      ? `${versionLine}\nCore: dsh ${coreVersion}`
+      : versionLine
     await ordinaryMessageBox({ type: 'info', title: locale.messages.aboutMenu, message: locale.messages.aboutProduct,
-      detail: formatDesktopMessage(locale.messages.aboutVersion, { version: app.getVersion() }),
+      detail,
       buttons: [locale.messages.updateAcknowledge], cancelId: 0 })
   }
   const commandManager = new DesktopCommandManager({
@@ -833,6 +852,17 @@ async function main(): Promise<void> {
       return undefined
     }
   }
+  const saveKitoIdentity = (token: string): Promise<{ ok: boolean }> => commitKitoIdentity(token, {
+    saveIdentityToken: async next => welcomeBackend?.saveNamed(KITO_IDENTITY_TOKEN_REF, next) ?? { ok: false },
+    signOutConsole: () => signOutKitoConsole(),
+    clearPreviousCredentials: async () => {
+      for (const ref of [KITO_IDENTITY_REFRESH_TOKEN_REF, KITO_NEWAPI_KEY_REF, KITO_CLAUDE_KEY_REF]) {
+        const removed = await welcomeBackend?.removeNamed(ref)
+        if (removed?.ok !== true) console.error(`kito sign-in could not clear previous ${ref}`)
+      }
+    },
+    deriveModelKey: identityToken => persistKitoModelKey(identityToken),
+  })
   const refreshKitoIdentityToken = createKitoIdentityRefresher({
     readRefreshToken: () => readStoredCredential(KITO_IDENTITY_REFRESH_TOKEN_REF),
     refresh: refreshToken => refreshKitoIdentity(refreshToken),
@@ -881,7 +911,8 @@ async function main(): Promise<void> {
         openConsole: (token, page) => openKitoConsole(token, page, { onSessionError: showConsoleError }),
         onConsoleError: showConsoleError,
         signOutConsole: () => signOutKitoConsole(),
-        readBalance: token => readKitoAccountBalance(token, {
+        readBalance: (token, accountNo) => readKitoAccountBalance(token, {
+          ...(accountNo === undefined ? {} : { accountNo }),
           readApiKey: () => readStoredCredential(KITO_NEWAPI_KEY_REF),
           refreshApiKey: identityToken => persistKitoModelKey(identityToken),
         }),
@@ -1260,11 +1291,13 @@ async function main(): Promise<void> {
 
   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
     : join(process.resourcesPath, 'icon.png')
+  const appVersion = app.getVersion()
+  const bundledCoreVersion = resolveBundledDshVersion()
   app.setAboutPanelOptions({
     applicationName: 'Kito Harness',
-    applicationVersion: app.getVersion(),
-    // The release has no separate build number; omit Electron's bundle version.
-    version: '',
+    applicationVersion: appVersion,
+    // Surface the bundled upstream dsh core version beside the Kito release when they diverge (ADR 0006).
+    version: bundledCoreVersion !== undefined && bundledCoreVersion !== appVersion ? `dsh ${bundledCoreVersion}` : '',
     copyright: '',
     iconPath: applicationIconPath,
   })
@@ -1555,13 +1588,7 @@ async function main(): Promise<void> {
           publish: (state) => {
             if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)
           },
-          saveIdentity: async (token) => {
-            const saved = await welcomeBackend?.saveNamed(KITO_IDENTITY_TOKEN_REF, token) ?? { ok: false }
-            // The model key is derived from a stored identity token, so it follows
-            // the same sign-in rather than asking the person for a second credential.
-            if (saved.ok) void persistKitoModelKey(token)
-            return saved
-          },
+          saveIdentity: token => saveKitoIdentity(token),
           saveRefreshToken: async token => welcomeBackend?.saveNamed(KITO_IDENTITY_REFRESH_TOKEN_REF, token) ?? { ok: false },
           onSuccess: () => {
             void enterWorkspace({ activate: false }).then(() => { publishKitoAccount() }).catch(() => undefined)
@@ -1722,7 +1749,7 @@ async function main(): Promise<void> {
       },
       saveIdentity: async (token) => {
         await waitForWelcomeBackend()
-        return welcomeBackend?.saveNamed(KITO_IDENTITY_TOKEN_REF, token) ?? { ok: false }
+        return saveKitoIdentity(token)
       },
       saveRefreshToken: async (token) => {
         await waitForWelcomeBackend()
@@ -1856,7 +1883,12 @@ if (ownsDesktopInstance) void app.whenReady().then(async () => {
   // Before anything else can fail: a packaged build has no terminal, so this
   // is the only place a startup failure stays readable afterwards.
   desktopLog = startDesktopLog(logDirectory())
-  initKitoSentry({ packaged: app.isPackaged, release: app.getVersion() })
+  const coreVersion = resolveBundledDshVersion()
+  initKitoSentry({
+    packaged: app.isPackaged,
+    release: app.getVersion(),
+    ...(coreVersion === undefined ? {} : { coreVersion }),
+  })
   await main()
 }).catch(async (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)

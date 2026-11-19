@@ -11,6 +11,7 @@ import type { CrashReportPhase, CrashReportSource } from './crash-report.ts'
 export const KITO_SENTRY_FLUSH_MS = 2_000
 
 let enabled = false
+let coreVersionTag: string | undefined
 
 /** Remove credentials that a Host stderr tail or token exchange might echo. */
 export function redactKitoDiagnostic(value: string): string {
@@ -38,17 +39,20 @@ function scrub<T extends {
  * @param appFacts - Packaged builds are labeled separately from local development.
  * @returns Whether later failures will be sent.
  */
-export function initKitoSentry(appFacts: { packaged: boolean; release: string }): boolean {
+export function initKitoSentry(appFacts: { packaged: boolean; release: string; coreVersion?: string }): boolean {
   if (enabled) return true
   const dsn = process.env.DSH_SENTRY_DSN?.trim() ?? ''
   if (dsn === '') return false
   const environment = process.env.DSH_SENTRY_ENVIRONMENT?.trim()
     || (appFacts.packaged ? 'packaged' : 'development')
+  const coreVersion = appFacts.coreVersion?.trim()
+  const nextCoreTag = coreVersion !== undefined && coreVersion !== '' ? coreVersion : undefined
   try {
     Sentry.init({
       dsn,
       environment,
       release: appFacts.release,
+      ...(nextCoreTag === undefined ? {} : { initialScope: { tags: { 'dsh.core_version': nextCoreTag } } }),
       tracesSampleRate: 0,
       skipOpenTelemetrySetup: true,
       beforeSend(event) {
@@ -59,6 +63,7 @@ export function initKitoSentry(appFacts: { packaged: boolean; release: string })
     console.error('kito sentry: init failed', error instanceof Error ? error.name : 'unknown')
     return false
   }
+  coreVersionTag = nextCoreTag
   enabled = true
   console.info(`kito sentry: collecting desktop errors (${environment})`)
   return true
@@ -77,7 +82,12 @@ export async function captureKitoFailure(
   if (!enabled) return
   try {
     Sentry.captureException(error, {
-      tags: { 'kito.source': facts.source, 'kito.phase': facts.phase, surface: 'desktop' },
+      tags: {
+        'kito.source': facts.source,
+        'kito.phase': facts.phase,
+        surface: 'desktop',
+        ...(coreVersionTag === undefined ? {} : { 'dsh.core_version': coreVersionTag }),
+      },
     })
     await Sentry.flush(KITO_SENTRY_FLUSH_MS)
   } catch {
